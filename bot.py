@@ -5,6 +5,8 @@ import datetime
 import aiosqlite
 import csv
 import os
+import io
+import asyncpg
 
 TOKEN = os.environ['TOKEN']
 
@@ -17,23 +19,25 @@ intents.guilds = True
 bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
 
-DATABASE = "work_sessions.db"
+# Database Connection Function
+async def connect_db():
+    return await asyncpg.connect(os.getenv("DATABASE_URL"))
 
-# Create Database Table
+# Create Table in PostgreSQL
 async def setup_db():
-    async with aiosqlite.connect(DATABASE) as db:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS work_sessions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                username TEXT,
-                task TEXT,
-                start_time TEXT,
-                end_time TEXT,
-                duration REAL
-            )
-        """)
-        await db.commit()
+    conn = await connect_db()
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS work_sessions (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
+            username TEXT,
+            task TEXT,
+            start_time TIMESTAMP,
+            end_time TIMESTAMP,
+            duration REAL
+        )
+    """)
+    await conn.close()
 
 # Store active work sessions in memory
 active_sessions = {}  # {user_id: (start_time, task)}
@@ -52,6 +56,7 @@ async def startwork(interaction: discord.Interaction, task: str):
 
     await interaction.response.send_message(f"⏳ {interaction.user.mention} started working on **{task}** at {start_time.strftime('%H:%M:%S')}.")
 
+
 # Slash command to Stop Work
 @tree.command(name="stopwork", description="Stop your current work session.")
 async def stopwork(interaction: discord.Interaction):
@@ -65,12 +70,13 @@ async def stopwork(interaction: discord.Interaction):
     end_time = datetime.datetime.now()
     duration = (end_time - start_time).total_seconds() / 60  # Convert to minutes
 
-    # Store session in database
-    async with aiosqlite.connect(DATABASE) as db:
-        await db.execute("INSERT INTO work_sessions (user_id, username, task, start_time, end_time, duration) VALUES (?, ?, ?, ?, ?, ?)",
-                         (user_id, interaction.user.name, task, start_time.strftime("%Y-%m-%d %H:%M:%S"),
-                          end_time.strftime("%Y-%m-%d %H:%M:%S"), duration))
-        await db.commit()
+    # Store session in PostgreSQL
+    conn = await connect_db()
+    await conn.execute(
+        "INSERT INTO work_sessions (user_id, username, task, start_time, end_time, duration) VALUES ($1, $2, $3, $4, $5, $6)",
+        user_id, interaction.user.name, task, start_time, end_time, duration
+    )
+    await conn.close()
 
     await interaction.response.send_message(f"✅ {interaction.user.mention} stopped working on **{task}**. Duration: {duration:.2f} minutes.")
 
@@ -91,21 +97,23 @@ async def status(interaction: discord.Interaction):
 # Slash command to Export Data to CSV
 @tree.command(name="exportcsv", description="Export work logs as a CSV file.")
 async def exportcsv(interaction: discord.Interaction):
-    async with aiosqlite.connect(DATABASE) as db:
-        cursor = await db.execute("SELECT username, task, start_time, end_time, duration FROM work_sessions")
-        logs = await cursor.fetchall()
+    conn = await connect_db()
+    rows = await conn.fetch("SELECT username, task, start_time, end_time, duration FROM work_sessions")
+    await conn.close()
 
-    if not logs:
+    if not rows:
         await interaction.response.send_message("No logs available to export.", ephemeral=True)
         return
 
-    filename = "work_sessions.csv"
-    with open(filename, mode="w", newline="") as file:
-        writer = csv.writer(file)
-        writer.writerow(["User", "Task", "Start Time", "End Time", "Duration (mins)"])
-        writer.writerows(logs)
+    # Create CSV in-memory
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["User", "Task", "Start Time", "End Time", "Duration (mins)"])
+    for row in rows:
+        writer.writerow([row["username"], row["task"], row["start_time"], row["end_time"], row["duration"]])
 
-    await interaction.response.send_message(file=discord.File(filename))
+    output.seek(0)
+    await interaction.response.send_message("📂 Here is the exported work log:", file=discord.File(fp=output, filename="work_sessions.csv"))
 
 # Bot Ready Event: Sync Commands
 @bot.event
