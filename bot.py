@@ -13,8 +13,9 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
 
-# Create bot instance using Slash Commands
-bot = commands.Bot(intents=intents)
+# Create bot instance using discord.Client (for slash commands)
+bot = discord.Client(intents=intents)
+tree = app_commands.CommandTree(bot)
 
 DATABASE = "work_sessions.db"
 
@@ -37,27 +38,27 @@ async def setup_db():
 # Store active work sessions in memory
 active_sessions = {}  # {user_id: (start_time, task)}
 
-# Command to Start Work with Task Name
-@bot.slash_command(name="startwork", description="Start tracking your work session.")
-async def startwork(ctx, task: str = app_commands.Param(description="What are you working on?")):
-    user_id = ctx.author.id
+# Slash command to Start Work with Task Name
+@tree.command(name="startwork", description="Start tracking your work session.")
+async def startwork(interaction: discord.Interaction, task: str):
+    user_id = interaction.user.id
 
     if user_id in active_sessions:
-        await ctx.respond(f"{ctx.author.mention}, you're already tracking a session!", ephemeral=True)
+        await interaction.response.send_message(f"{interaction.user.mention}, you're already tracking a session!", ephemeral=True)
         return
 
     start_time = datetime.datetime.now()
     active_sessions[user_id] = (start_time, task)
 
-    await ctx.respond(f"⏳ {ctx.author.mention} started working on **{task}** at {start_time.strftime('%H:%M:%S')}.")
+    await interaction.response.send_message(f"⏳ {interaction.user.mention} started working on **{task}** at {start_time.strftime('%H:%M:%S')}.")
 
-# Command to Stop Work
-@bot.slash_command(name="stopwork", description="Stop your current work session.")
-async def stopwork(ctx):
-    user_id = ctx.author.id
+# Slash command to Stop Work
+@tree.command(name="stopwork", description="Stop your current work session.")
+async def stopwork(interaction: discord.Interaction):
+    user_id = interaction.user.id
 
     if user_id not in active_sessions:
-        await ctx.respond(f"{ctx.author.mention}, you haven't started tracking yet!", ephemeral=True)
+        await interaction.response.send_message(f"{interaction.user.mention}, you haven't started tracking yet!", ephemeral=True)
         return
 
     start_time, task = active_sessions.pop(user_id)
@@ -67,35 +68,35 @@ async def stopwork(ctx):
     # Store session in database
     async with aiosqlite.connect(DATABASE) as db:
         await db.execute("INSERT INTO work_sessions (user_id, username, task, start_time, end_time, duration) VALUES (?, ?, ?, ?, ?, ?)",
-                         (user_id, ctx.author.name, task, start_time.strftime("%Y-%m-%d %H:%M:%S"),
+                         (user_id, interaction.user.name, task, start_time.strftime("%Y-%m-%d %H:%M:%S"),
                           end_time.strftime("%Y-%m-%d %H:%M:%S"), duration))
         await db.commit()
 
-    await ctx.respond(f"✅ {ctx.author.mention} stopped working on **{task}**. Duration: {duration:.2f} minutes.")
+    await interaction.response.send_message(f"✅ {interaction.user.mention} stopped working on **{task}**. Duration: {duration:.2f} minutes.")
 
-# Command to Check Active Sessions
-@bot.slash_command(name="status", description="See all active work sessions.")
-async def status(ctx):
+# Slash command to Check Active Sessions
+@tree.command(name="status", description="See all active work sessions.")
+async def status(interaction: discord.Interaction):
     if not active_sessions:
-        await ctx.respond("No active work sessions.", ephemeral=True)
+        await interaction.response.send_message("No active work sessions.", ephemeral=True)
         return
 
     response = "**Active Work Sessions:**\n"
     for user_id, (start_time, task) in active_sessions.items():
-        user = ctx.guild.get_member(user_id)
+        user = interaction.guild.get_member(user_id)
         response += f"🔹 **{user.name}** - {task} (since {start_time.strftime('%H:%M:%S')})\n"
 
-    await ctx.respond(response)
+    await interaction.response.send_message(response)
 
-# Command to Export Data to CSV
-@bot.slash_command(name="exportcsv", description="Export work logs as a CSV file.")
-async def exportcsv(ctx):
+# Slash command to Export Data to CSV
+@tree.command(name="exportcsv", description="Export work logs as a CSV file.")
+async def exportcsv(interaction: discord.Interaction):
     async with aiosqlite.connect(DATABASE) as db:
         cursor = await db.execute("SELECT username, task, start_time, end_time, duration FROM work_sessions")
         logs = await cursor.fetchall()
 
     if not logs:
-        await ctx.respond("No logs available to export.", ephemeral=True)
+        await interaction.response.send_message("No logs available to export.", ephemeral=True)
         return
 
     filename = "work_sessions.csv"
@@ -104,12 +105,14 @@ async def exportcsv(ctx):
         writer.writerow(["User", "Task", "Start Time", "End Time", "Duration (mins)"])
         writer.writerows(logs)
 
-    await ctx.respond(file=discord.File(filename))
+    await interaction.response.send_message(file=discord.File(filename))
 
-# Run the bot
+# Bot Ready Event: Sync Commands
 @bot.event
 async def on_ready():
     await setup_db()
+    await tree.sync()  # Sync slash commands
     print(f"✅ Logged in as {bot.user}")
 
+# Run the bot
 bot.run(TOKEN)
