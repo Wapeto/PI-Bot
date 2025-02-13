@@ -1,2 +1,2 @@
-discord.py
+discord.py[voice] >=2.3.2
 aiosqlite

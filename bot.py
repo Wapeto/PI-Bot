@@ -1,6 +1,6 @@
 import discord
-from discord import Option
 from discord.ext import commands
+from discord import app_commands
 import datetime
 import aiosqlite
 import csv
@@ -39,7 +39,7 @@ active_sessions = {}  # {user_id: (start_time, task)}
 
 # Command to Start Work with Task Name
 @bot.slash_command(name="startwork", description="Start tracking your work session.")
-async def startwork(ctx, task: Option(str, "What are you working on?", required=True)):
+async def startwork(ctx, task: str = app_commands.Param(description="What are you working on?")):
     user_id = ctx.author.id
 
     if user_id in active_sessions:
