@@ -92,16 +92,17 @@ async def stopwork(interaction: discord.Interaction):
     duration = (end_time - start_time).total_seconds() / 60  # Convert to minutes
 
     # Store session in PostgreSQL
-    async with connect_db() as conn:
-        await conn.execute(
-            "INSERT INTO work_sessions (user_id, username, task, start_time, end_time, duration) VALUES ($1, $2, $3, $4, $5, $6)",
-            user_id,
-            interaction.user.name,
-            task,
-            start_time,
-            end_time,
-            duration,
-        )
+    conn = await connect_db()
+    await conn.execute(
+        "INSERT INTO work_sessions (user_id, username, task, start_time, end_time, duration) VALUES ($1, $2, $3, $4, $5, $6)",
+        user_id,
+        interaction.user.name,
+        task,
+        start_time,
+        end_time,
+        duration,
+    )
+    await conn.close()
 
     # Remove "Working" role
     if working_role:
@@ -115,10 +116,11 @@ async def stopwork(interaction: discord.Interaction):
 # Slash command to Export Data to CSV
 @tree.command(name="exportcsv", description="Export work logs as a CSV file.")
 async def exportcsv(interaction: discord.Interaction):
-    async with connect_db() as conn:
-        rows = await conn.fetch(
-            "SELECT username, task, start_time, end_time, duration FROM work_sessions"
-        )
+    conn = await connect_db()
+    rows = await conn.fetch(
+        "SELECT username, task, start_time, end_time, duration FROM work_sessions"
+    )
+    await conn.close()
 
     if not rows:
         await interaction.response.send_message(
@@ -151,11 +153,12 @@ async def exportcsv(interaction: discord.Interaction):
 # Slash command to Check Work Stats
 @tree.command(name="stats", description="Check your work stats.")
 async def stats(interaction: discord.Interaction):
-    async with connect_db() as conn:
-        row = await conn.fetchrow(
-            "SELECT SUM(duration) as total_time FROM work_sessions WHERE user_id=$1",
-            interaction.user.id,
-        )
+    conn = await connect_db()
+    row = await conn.fetchrow(
+        "SELECT SUM(duration) as total_time FROM work_sessions WHERE user_id=$1",
+        interaction.user.id,
+    )
+    await conn.close()
 
     total_time = row["total_time"] or 0  # Handle None case
     await interaction.response.send_message(
@@ -184,11 +187,9 @@ class ManualTimeModal(discord.ui.Modal, title="Manual Time Entry"):
                 self.start_time.value, "%Y-%m-%d %H:%M"
             )
             end_time = datetime.datetime.strptime(self.end_time.value, "%Y-%m-%d %H:%M")
-            duration = (
-                end_time - start_time
-            ).total_seconds() / 60  # Convert to minutes
+            duration = (end_time - start_time).total_seconds() / 60  # Convert to minutes
 
-            # Corrected: Properly open & close PostgreSQL connection
+            # Store session in database
             conn = await connect_db()
             await conn.execute(
                 "INSERT INTO work_sessions (user_id, username, task, start_time, end_time, duration) VALUES ($1, $2, $3, $4, $5, $6)",
@@ -199,7 +200,7 @@ class ManualTimeModal(discord.ui.Modal, title="Manual Time Entry"):
                 end_time,
                 duration,
             )
-            await conn.close()  # Ensure connection is closed properly
+            await conn.close()
 
             await interaction.response.send_message(
                 f"✅ Manual entry added for **{self.task_name.value}**.\n⏳ Start: {self.start_time.value}\n🛑 End: {self.end_time.value}\n📊 Duration: {duration:.2f} mins.",
