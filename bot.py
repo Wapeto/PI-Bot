@@ -26,20 +26,21 @@ async def connect_db():
 
 # Create Table in PostgreSQL
 async def setup_db():
-    async with connect_db() as conn:
-        await conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS work_sessions (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT,
-                username TEXT,
-                task TEXT,
-                start_time TIMESTAMP,
-                end_time TIMESTAMP,
-                duration REAL
-            )
+    conn = await connect_db()
+    await conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS work_sessions (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
+            username TEXT,
+            task TEXT,
+            start_time TIMESTAMP,
+            end_time TIMESTAMP,
+            duration REAL
         )
+        """
+    )
+    await conn.close()
 
 
 # Store active work sessions in memory
@@ -178,25 +179,27 @@ class ManualTimeModal(discord.ui.Modal, title="Manual Time Entry"):
         user_id = interaction.user.id
         username = interaction.user.name
 
-        # Convert input times to datetime objects
         try:
             start_time = datetime.datetime.strptime(
                 self.start_time.value, "%Y-%m-%d %H:%M"
             )
             end_time = datetime.datetime.strptime(self.end_time.value, "%Y-%m-%d %H:%M")
-            duration = (end_time - start_time).total_seconds() / 60  # Convert to minutes
+            duration = (
+                end_time - start_time
+            ).total_seconds() / 60  # Convert to minutes
 
-            # Store session in database
-            async with connect_db() as conn:
-                await conn.execute(
-                    "INSERT INTO work_sessions (user_id, username, task, start_time, end_time, duration) VALUES ($1, $2, $3, $4, $5, $6)",
-                    user_id,
-                    username,
-                    self.task_name.value,
-                    start_time,
-                    end_time,
-                    duration,
-                )
+            # Corrected: Properly open & close PostgreSQL connection
+            conn = await connect_db()
+            await conn.execute(
+                "INSERT INTO work_sessions (user_id, username, task, start_time, end_time, duration) VALUES ($1, $2, $3, $4, $5, $6)",
+                user_id,
+                username,
+                self.task_name.value,
+                start_time,
+                end_time,
+                duration,
+            )
+            await conn.close()  # Ensure connection is closed properly
 
             await interaction.response.send_message(
                 f"✅ Manual entry added for **{self.task_name.value}**.\n⏳ Start: {self.start_time.value}\n🛑 End: {self.end_time.value}\n📊 Duration: {duration:.2f} mins.",
