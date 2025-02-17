@@ -2,11 +2,10 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import datetime
-import aiosqlite
+import asyncpg
 import csv
 import os
 import io
-import asyncpg
 
 TOKEN = os.environ["TOKEN"]
 
@@ -27,21 +26,20 @@ async def connect_db():
 
 # Create Table in PostgreSQL
 async def setup_db():
-    conn = await connect_db()
-    await conn.execute(
+    async with connect_db() as conn:
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS work_sessions (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                username TEXT,
+                task TEXT,
+                start_time TIMESTAMP,
+                end_time TIMESTAMP,
+                duration REAL
+            )
         """
-        CREATE TABLE IF NOT EXISTS work_sessions (
-            id SERIAL PRIMARY KEY,
-            user_id BIGINT,
-            username TEXT,
-            task TEXT,
-            start_time TIMESTAMP,
-            end_time TIMESTAMP,
-            duration REAL
         )
-    """
-    )
-    await conn.close()
 
 
 # Store active work sessions in memory
@@ -93,17 +91,16 @@ async def stopwork(interaction: discord.Interaction):
     duration = (end_time - start_time).total_seconds() / 60  # Convert to minutes
 
     # Store session in PostgreSQL
-    conn = await connect_db()
-    await conn.execute(
-        "INSERT INTO work_sessions (user_id, username, task, start_time, end_time, duration) VALUES ($1, $2, $3, $4, $5, $6)",
-        user_id,
-        interaction.user.name,
-        task,
-        start_time,
-        end_time,
-        duration,
-    )
-    await conn.close()
+    async with connect_db() as conn:
+        await conn.execute(
+            "INSERT INTO work_sessions (user_id, username, task, start_time, end_time, duration) VALUES ($1, $2, $3, $4, $5, $6)",
+            user_id,
+            interaction.user.name,
+            task,
+            start_time,
+            end_time,
+            duration,
+        )
 
     # Remove "Working" role
     if working_role:
@@ -114,33 +111,13 @@ async def stopwork(interaction: discord.Interaction):
     )
 
 
-# Slash command to Check Active Sessions
-@tree.command(name="status", description="See all active work sessions.")
-async def status(interaction: discord.Interaction):
-    if not active_sessions:
-        await interaction.response.send_message(
-            "No active work sessions.", ephemeral=True
-        )
-        return
-
-    response = "**Active Work Sessions:**\n"
-    for user_id, (start_time, task) in active_sessions.items():
-        user = interaction.guild.get_member(user_id)
-        response += (
-            f"🔹 **{user.name}** - {task} (since {start_time.strftime('%H:%M:%S')})\n"
-        )
-
-    await interaction.response.send_message(response)
-
-
 # Slash command to Export Data to CSV
 @tree.command(name="exportcsv", description="Export work logs as a CSV file.")
 async def exportcsv(interaction: discord.Interaction):
-    conn = await connect_db()
-    rows = await conn.fetch(
-        "SELECT username, task, start_time, end_time, duration FROM work_sessions"
-    )
-    await conn.close()
+    async with connect_db() as conn:
+        rows = await conn.fetch(
+            "SELECT username, task, start_time, end_time, duration FROM work_sessions"
+        )
 
     if not rows:
         await interaction.response.send_message(
@@ -170,49 +147,19 @@ async def exportcsv(interaction: discord.Interaction):
     )
 
 
-# Slash command to View Work History
-@tree.command(name="history", description="See your last 5 work sessions.")
-async def history(interaction: discord.Interaction):
-    conn = await connect_db()
-    rows = await conn.fetch(
-        "SELECT task, start_time, end_time, duration FROM work_sessions WHERE user_id=$1 ORDER BY start_time DESC LIMIT 5",
-        interaction.user.id,
-    )
-    await conn.close()
-
-    if not rows:
-        await interaction.response.send_message(
-            f"{interaction.user.mention}, you have no work history yet.", ephemeral=True
+# Slash command to Check Work Stats
+@tree.command(name="stats", description="Check your work stats.")
+async def stats(interaction: discord.Interaction):
+    async with connect_db() as conn:
+        row = await conn.fetchrow(
+            "SELECT SUM(duration) as total_time FROM work_sessions WHERE user_id=$1",
+            interaction.user.id,
         )
-        return
 
-    response = "**Your Last 5 Work Sessions:**\n"
-    for row in rows:
-        response += f"🔹 **{row['task']}**: {row['start_time']} → {row['end_time']} ({row['duration']:.2f} mins)\n"
-
-    await interaction.response.send_message(response)
-
-
-# Slash command to View Leaderboard
-@tree.command(
-    name="leaderboard", description="See the top 5 users with the most time worked."
-)
-async def leaderboard(interaction: discord.Interaction):
-    conn = await connect_db()
-    rows = await conn.fetch(
-        "SELECT username, SUM(duration) as total_time FROM work_sessions GROUP BY username ORDER BY total_time DESC LIMIT 5"
+    total_time = row["total_time"] or 0  # Handle None case
+    await interaction.response.send_message(
+        f"📊 **Total Time Worked:** {total_time:.2f} minutes."
     )
-    await conn.close()
-
-    if not rows:
-        await interaction.response.send_message("No work logs found.", ephemeral=True)
-        return
-
-    response = "**Top 5 Users - Most Time Worked:**\n"
-    for index, row in enumerate(rows, start=1):
-        response += f"🥇 **{row['username']}** - {row['total_time']:.2f} mins\n"
-
-    await interaction.response.send_message(response)
 
 
 # Modal for Manual Time Entry
@@ -237,26 +184,19 @@ class ManualTimeModal(discord.ui.Modal, title="Manual Time Entry"):
                 self.start_time.value, "%Y-%m-%d %H:%M"
             )
             end_time = datetime.datetime.strptime(self.end_time.value, "%Y-%m-%d %H:%M")
-
-            # Calculate duration
-            duration = (
-                end_time - start_time
-            ).total_seconds() / 60  # Convert to minutes
+            duration = (end_time - start_time).total_seconds() / 60  # Convert to minutes
 
             # Store session in database
-            conn = await connect_db()
-            await conn.execute(
-                "INSERT INTO work_sessions (user_id, username, task, start_time, end_time, duration) VALUES (?, ?, ?, ?, ?, ?)",
-                (
+            async with connect_db() as conn:
+                await conn.execute(
+                    "INSERT INTO work_sessions (user_id, username, task, start_time, end_time, duration) VALUES ($1, $2, $3, $4, $5, $6)",
                     user_id,
                     username,
                     self.task_name.value,
-                    start_time.strftime("%Y-%m-%d %H:%M"),
-                    end_time.strftime("%Y-%m-%d %H:%M"),
+                    start_time,
+                    end_time,
                     duration,
-                ),
-            )
-            await conn.close()
+                )
 
             await interaction.response.send_message(
                 f"✅ Manual entry added for **{self.task_name.value}**.\n⏳ Start: {self.start_time.value}\n🛑 End: {self.end_time.value}\n📊 Duration: {duration:.2f} mins.",
@@ -274,34 +214,12 @@ class ManualTimeModal(discord.ui.Modal, title="Manual Time Entry"):
 async def manualtime(interaction: discord.Interaction):
     await interaction.response.send_modal(ManualTimeModal())
 
-# Slash command to check stats
-@tree.command(name="stats", description="Check your work stats.")
-async def stats(interaction: discord.Interaction):
-    conn = await connect_db()
-    rows = await conn.fetch(
-        "SELECT SUM(duration) as total_time FROM work_sessions WHERE user_id=$1",
-        interaction.user.id,
-    )
-    await conn.close()
-
-    if not rows:
-        await interaction.response.send_message(
-            f"{interaction.user.mention}, you have no work history yet.", ephemeral=True
-        )
-        return
-
-    total_time = rows[0]["total_time"]
-    await interaction.response.send_message(
-        f"📊 **Total Time Worked:** {total_time:.2f} minutes."
-    )
-    
-
 
 # Bot Ready Event: Sync Commands
 @bot.event
 async def on_ready():
     await setup_db()
-    await tree.sync()  # Sync slash commands
+    await tree.sync()
     print(f"✅ Logged in as {bot.user}")
 
 
