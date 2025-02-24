@@ -218,6 +218,42 @@ class ManualTimeModal(discord.ui.Modal, title="Manual Time Entry"):
 async def manualtime(interaction: discord.Interaction):
     await interaction.response.send_modal(ManualTimeModal())
 
+    # Slash command to View Work History
+@tree.command(name="history", description="See your last 5 work sessions.")
+async def history(interaction: discord.Interaction):
+    conn = await connect_db()
+    rows = await conn.fetch("SELECT task, start_time, end_time, duration FROM work_sessions WHERE user_id=$1 ORDER BY start_time DESC LIMIT 5", interaction.user.id)
+    await conn.close()
+
+    if not rows:
+        await interaction.response.send_message(f"{interaction.user.mention}, you have no work history yet.", ephemeral=True)
+        return
+
+    response = "**Your Last 5 Work Sessions:**\n"
+    for row in rows:
+        response += f"🔹 **{row['task']}**: {row['start_time']} → {row['end_time']} ({row['duration']:.2f} mins)\n"
+
+    await interaction.response.send_message(response)
+
+# Slash command to View Leaderboard
+@tree.command(name="leaderboard", description="See the top 5 users with the most time worked.")
+async def leaderboard(interaction: discord.Interaction):
+    conn = await connect_db()
+    rows = await conn.fetch("SELECT username, SUM(duration) as total_time FROM work_sessions GROUP BY username ORDER BY total_time DESC LIMIT 5")
+    await conn.close()
+
+    if not rows:
+        await interaction.response.send_message("No work logs found.", ephemeral=True)
+        return
+
+    response = "**Top 5 Users - Most Time Worked:**\n"
+    for index, row in enumerate(rows, start=1):
+        response += f"🥇 **{row['username']}** - {row['total_time']:.2f} mins\n"
+
+    await interaction.response.send_message(response)
+
+
+
 
 # Bot Ready Event: Sync Commands
 @bot.event
