@@ -248,7 +248,9 @@ async def leaderboard(interaction: discord.Interaction):
 
     response = "**Top 5 Users - Most Time Worked:**\n"
     for index, row in enumerate(rows, start=1):
-        response += f"🥇 **{row['username']}** - {row['total_time']:.2f} mins\n"
+        hours = int(row['total_time'] // 60)
+        minutes = int(row['total_time'] % 60)
+        response += f"🥇 **{row['username']}** - {hours:02d}:{minutes:02d}\n"
 
     await interaction.response.send_message(response)
 
