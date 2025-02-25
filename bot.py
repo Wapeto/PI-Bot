@@ -250,7 +250,7 @@ async def leaderboard(interaction: discord.Interaction):
     for index, row in enumerate(rows, start=1):
         hours = int(row['total_time'] // 60)
         minutes = int(row['total_time'] % 60)
-        response += f"🥇 **{row['username']}** - {hours:02d}:{minutes:02d}\n"
+        response += f"🥇 **{row['username']}** - {hours:02d}h {minutes:02d}m\n"
 
     await interaction.response.send_message(response)
 
