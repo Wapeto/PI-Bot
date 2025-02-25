@@ -252,7 +252,19 @@ async def leaderboard(interaction: discord.Interaction):
 
     await interaction.response.send_message(response)
 
+# Slash command to view all current active work sessions
+@tree.command(name="activework", description="See all active work sessions.")
+async def activework(interaction: discord.Interaction):
+    if not active_sessions:
+        await interaction.response.send_message("No active work sessions.", ephemeral=True)
+        return
 
+    response = "**Active Work Sessions:**\n"
+    for user_id, (start_time, task) in active_sessions.items():
+        user = interaction.guild.get_member(user_id)
+        response += f"🔹 **{user.display_name}**: {task} (Started at {start_time.strftime('%H:%M:%S')})\n"
+
+    await interaction.response.send_message(response)
 
 
 # Bot Ready Event: Sync Commands
