@@ -236,17 +236,17 @@ async def history(interaction: discord.Interaction):
     await interaction.response.send_message(response)
 
 # Slash command to View Leaderboard
-@tree.command(name="leaderboard", description="See the top 5 users with the most time worked.")
+@tree.command(name="leaderboard", description="See the top users with the most time worked.")
 async def leaderboard(interaction: discord.Interaction):
     conn = await connect_db()
-    rows = await conn.fetch("SELECT username, SUM(duration) as total_time FROM work_sessions GROUP BY username ORDER BY total_time DESC LIMIT 5")
+    rows = await conn.fetch("SELECT username, SUM(duration) as total_time FROM work_sessions GROUP BY username ORDER BY total_time DESC")
     await conn.close()
 
     if not rows:
         await interaction.response.send_message("No work logs found.", ephemeral=True)
         return
 
-    response = "**Top 5 Users - Most Time Worked:**\n"
+    response = "**Top Users - Most Time Worked:**\n"
     for index, row in enumerate(rows, start=1):
         hours = int(row['total_time'] // 60)
         minutes = int(row['total_time'] % 60)
